@@ -53,6 +53,8 @@
 #include "CommonTools/CandUtils/interface/AddFourMomenta.h"
 #include "DataFormats/ParticleFlowCandidate/interface/PFCandidate.h"
 
+#include "DataFormats/PatCandidates/interface/PackedCandidate.h"
+
 #include "MuonPOGtreeProducer/Tools/src/MuonPogTree.h"
 #include "TTree.h"
 
@@ -86,12 +88,15 @@ private:
 
   Int_t fillMuons(const edm::Handle<edm::View<reco::Muon> > &,
 		  const edm::Handle<std::vector<reco::Vertex> > &,
-		  const edm::Handle<reco::BeamSpot> &);
+		  const edm::Handle<reco::BeamSpot> &,
+      const edm::Handle<pat::PackedCandidateCollection> &);
 
   void fillL1(const edm::Handle<l1t::MuonBxCollection> &);
     bool isIsolatedMuon(const reco::Muon& muon) const ;
   bool isGlobalTightMuon( const reco::Muon& muon ) const ;
   bool isTrackerTightMuon( const reco::Muon& muon ) const ;
+  bool isTkHighPtMuons( const reco::Muon&  ) const;
+
   bool outInOnly(const reco::Muon &mu) const {
       const reco::Track &tk = *mu.innerTrack();
       return tk.algoMask().count() == 1 && tk.isAlgoInMask(reco::Track::muonSeededStepOutIn);
@@ -149,6 +154,7 @@ private:
   edm::EDGetTokenT<reco::CaloMETCollection> caloMetToken_;
 
   edm::EDGetTokenT<reco::GenParticleCollection> genToken_;
+  edm::EDGetTokenT<pat::PackedCandidateCollection> PFToken_;
   edm::EDGetTokenT<std::vector<PileupSummaryInfo> > pileUpInfoToken_;
   edm::EDGetTokenT<GenEventInfoProduct> genInfoToken_;
 
@@ -211,6 +217,12 @@ MuonPogTreeProducer::MuonPogTreeProducer( const edm::ParameterSet & cfg )
 
   tag = cfg.getUntrackedParameter<edm::InputTag>("l1MuonsTag", edm::InputTag("gmtStage2Digis:Muon:"));
   if (tag.label() != "none") l1Token_ = consumes<l1t::MuonBxCollection>(tag);
+
+  tag = cfg.getUntrackedParameter<edm::InputTag>("PFparticlesTag", edm::InputTag("packedPFCandidates"));
+  if (tag.label() != "none") PFToken_ = consumes<pat::PackedCandidateCollection>(tag);
+
+
+
 
   m_minMuPtCut = cfg.getUntrackedParameter<double>("MinMuPtCut", 0.);
   m_minNMuCut  = cfg.getUntrackedParameter<int>("MinNMuCut",  0.);
@@ -406,13 +418,19 @@ void MuonPogTreeProducer::analyze (const edm::Event & ev, const edm::EventSetup 
 	edm::LogError("") << "[MuonPogTreeProducer] Muon collection does not exist !!!";
     }
 
+    edm::Handle<pat::PackedCandidateCollection> PFparticles;
+    if (!PFToken_.isUninitialized() )
+      {
+          if (!ev.getByToken(PFToken_, PFparticles))
+            edm::LogError("") << "[MuonPogTreeProducer] PF particles collection does not exist !!!";
+      }
 
   Int_t nGoodMuons = 0;
   eventId_.maxPTs.clear();
   // Fill muon information
-  if (muons.isValid() && vertexes.isValid() && beamSpot.isValid())
+  if (muons.isValid() && vertexes.isValid() && beamSpot.isValid() && PFparticles.isValid())
     {
-      nGoodMuons = fillMuons(muons,vertexes,beamSpot);
+      nGoodMuons = fillMuons(muons,vertexes,beamSpot, PFparticles);
     }
   eventId_.nMuons = nGoodMuons;
 
@@ -427,6 +445,8 @@ void MuonPogTreeProducer::analyze (const edm::Event & ev, const edm::EventSetup 
             fillL1(l1s);
         }
     }
+
+
 
   if (nGoodMuons >= m_minNMuCut)
   tree_["muPogTree"]->Fill();
@@ -629,11 +649,20 @@ void MuonPogTreeProducer::fillPV(const edm::Handle<std::vector<reco::Vertex> > &
 
 Int_t MuonPogTreeProducer::fillMuons(const edm::Handle<edm::View<reco::Muon> > & muons,
 				     const edm::Handle<std::vector<reco::Vertex> > & vertexes,
-				     const edm::Handle<reco::BeamSpot> & beamSpot)
+				     const edm::Handle<reco::BeamSpot> & beamSpot,
+             const edm::Handle<pat::PackedCandidateCollection> &PFparticles)
 {
 
   edm::View<reco::Muon>::const_iterator muonIt  = muons->begin();
   edm::View<reco::Muon>::const_iterator muonEnd = muons->end();
+
+  std::vector<pat::PackedCandidate> thePats = *PFparticles;
+  std::cout << "nb of pf particles=" << thePats.size() << std::endl;
+
+
+
+
+
 
   unsigned int muonIdx_=0;
   for (; muonIt != muonEnd; ++muonIt)
@@ -650,8 +679,8 @@ Int_t MuonPogTreeProducer::fillMuons(const edm::Handle<edm::View<reco::Muon> > &
       bool isPF          = mu.isPFMuon();
 
       bool hasInnerTrack = !mu.innerTrack().isNull();
-/*      bool hasTunePTrack = !mu.tunePMuonBestTrack().isNull();
-      bool hasPickyTrack = !mu.pickyTrack().isNull();
+      bool hasTunePTrack = !mu.tunePMuonBestTrack().isNull();
+/*      bool hasPickyTrack = !mu.pickyTrack().isNull();
       bool hasDytTrack = !mu.dytTrack().isNull();
       bool hasTpfmsTrack = !mu.tpfmsTrack().isNull();
   */
@@ -682,17 +711,17 @@ Int_t MuonPogTreeProducer::fillMuons(const edm::Handle<edm::View<reco::Muon> > &
 						isGlobal ? mu.globalTrack()->charge()  : -1000.,
 						isGlobal ? mu.globalTrack()->ptError() : -1000.));
 
+//ntupleMu.fits.push_back(muon_pog::MuonFit(1, 0, 0, 1, 0));
 ntupleMu.fits.push_back(muon_pog::MuonFit(1, 0, 0, 1, 0));
 ntupleMu.fits.push_back(muon_pog::MuonFit(1, 0, 0, 1, 0));
 ntupleMu.fits.push_back(muon_pog::MuonFit(1, 0, 0, 1, 0));
-ntupleMu.fits.push_back(muon_pog::MuonFit(1, 0, 0, 1, 0));
-   /*   ntupleMu.fits.push_back(muon_pog::MuonFit(hasTunePTrack ? mu.tunePMuonBestTrack()->pt()  : -1000.,
+     ntupleMu.fits.push_back(muon_pog::MuonFit(hasTunePTrack ? mu.tunePMuonBestTrack()->pt()  : -1000.,
 						hasTunePTrack ? mu.tunePMuonBestTrack()->eta() : -1000.,
 						hasTunePTrack ? mu.tunePMuonBestTrack()->phi() : -1000.,
 						hasTunePTrack ? mu.tunePMuonBestTrack()->charge()  : -1000.,
 						hasTunePTrack ? mu.tunePMuonBestTrack()->ptError() : -1000.));
 
-      ntupleMu.fits.push_back(muon_pog::MuonFit(hasPickyTrack ? mu.pickyTrack()->pt()  : -1000.,
+  /*    ntupleMu.fits.push_back(muon_pog::MuonFit(hasPickyTrack ? mu.pickyTrack()->pt()  : -1000.,
                         hasPickyTrack ? mu.pickyTrack()->eta() : -1000.,
                         hasPickyTrack ? mu.pickyTrack()->phi() : -1000.,
                         hasPickyTrack ? mu.pickyTrack()->charge()  : -1000.,
@@ -716,6 +745,10 @@ ntupleMu.fits.push_back(muon_pog::MuonFit(1, 0, 0, 1, 0));
       ntupleMu.trackerIso = detIso03.sumPt;
       ntupleMu.EMCalIso   = detIso03.emEt;
       ntupleMu.HCalIso    = detIso03.hadEt;
+
+      /*reco::MuonIsolation detIso04 = mu.isolationR04();
+      ntupleMu.trackerIso04 = detIso04.sumPt;*/
+
 
       // PF Isolation
       reco::MuonPFIsolation pfIso04 = mu.pfIsolationR04();
@@ -876,6 +909,129 @@ if ( mu.isMatchesValid() && ntupleMu.isTrackerArb )
 
       ntupleMu.dxybs  = dxybs;
       ntupleMu.dzbs   = dzbs;
+
+
+      ntupleMu.PFparticleInCone_pt = -9999;
+      ntupleMu.PFparticleInCone_pdgID = -9999;
+
+      float chHadPtToRemove=0;
+      float ntHadPtToRemove=0;
+      float pfPhotonToRemove=0;
+      ///checkMuonInCone
+      for (unsigned int j = 0; j < muons->size(); ++j) {
+          const reco::Muon &otherMu = (*muons)[j];
+          if (j == muonIdx_) continue;
+          if (!(isTkHighPtMuons(otherMu))) continue;
+          //if (otherMu.isPFMuon()) continue;
+          if (deltaR2(mu,otherMu) < 0.16){
+            if (isTkHighPtMuons(mu)){
+              /*std::cout << "hi, found a second muon in the cone" << std::endl;
+              std::cout << "first muon pt" << mu.pt() << " " <<  mu.eta()  << " "<< mu.isPFMuon() << endl;
+              std::cout << "second muon pt " << otherMu.pt() << " " << otherMu.eta() << " " << otherMu.isPFMuon() << endl;*/
+              /*float minDr=100;
+              float minDrMain=100;
+              //  float secMin=100;
+              int iteParticle = -1;
+              int iteParticleMain = -1;*/
+
+              for (unsigned int itePat=0 ; itePat<thePats.size(); itePat++){
+                pat::PackedCandidate aPat = thePats.at(itePat);
+                if (fabs(aPat.pdgId())==13) continue;
+                float deltaR = deltaR2(aPat,otherMu);
+                float deltaRMu = deltaR2(aPat,mu);
+                if (deltaR<0.16){
+                  //cout << "pt=" << aPat.pt() << " pdgID=" << aPat.pdgId() << " deltaR=" << deltaR  << " deltaOther=" << deltaRMu<< endl;
+                  if ((deltaR<0.0001)&&(!otherMu.isPFMuon())&&(fabs(aPat.pdgId())==211)){
+                    chHadPtToRemove = chHadPtToRemove+aPat.pt();
+                  }
+                  if ((deltaR<0.001)&&(fabs(aPat.pdgId())==130)){
+                    ntHadPtToRemove = ntHadPtToRemove+ aPat.pt();
+                  }
+                  if ((deltaR<0.01)&&(fabs(aPat.pdgId())==22)){
+                    pfPhotonToRemove =  pfPhotonToRemove+ aPat.pt();
+                  }
+                  //cout << "status iso before=" << pfIso04.sumPhotonEt-pfPhotonToRemove-aPat.pt() << " deltaR=" << deltaRMu << endl;
+                  if ((deltaRMu<0.001)&&(fabs(aPat.pdgId())==22)&&((pfIso04.sumPhotonEt-pfPhotonToRemove-aPat.pt())>-10)){
+                    //cout << "hello inside " << endl;
+                    pfPhotonToRemove =  pfPhotonToRemove+ aPat.pt();
+                  }
+                  //cout << "status iso before=" << pfIso04.sumNeutralHadronEt-ntHadPtToRemove-aPat.pt() << " deltaR=" << deltaRMu << endl;
+                  if ((deltaRMu<0.001)&&(fabs(aPat.pdgId())==130)&&((pfIso04.sumNeutralHadronEt-ntHadPtToRemove-aPat.pt())>-10)){
+                    //cout << "hello inside " << endl;
+                    ntHadPtToRemove = ntHadPtToRemove+ aPat.pt();
+                  }
+                }
+
+              /*  if (minDr>deltaR) {
+              //  secMin = minDr;
+                  minDr=deltaR;
+                  iteParticle=itePat;
+                }
+                if (minDrMain>deltaRMu){
+                  minDrMain=deltaRMu;
+                  iteParticleMain=itePat;
+                }*/
+
+              }
+              /*if (iteParticle!=-1){
+                pat::PackedCandidate closestPat = thePats.at(iteParticle);
+                if ((minDr<0.0001)&&(!otherMu.isPFMuon())&&(fabs(closestPat.pdgId())==211)){
+                  chHadPtToRemove = chHadPtToRemove+closestPat.pt();
+                }
+                if ((minDr<0.001)&&(fabs(closestPat.pdgId())==130)){
+                  ntHadPtToRemove = ntHadPtToRemove+ closestPat.pt();
+                }
+                if ((minDr<0.01)&&(fabs(closestPat.pdgId())==22)){
+                  pfPhotonToRemove =  pfPhotonToRemove+ closestPat.pt();
+                }
+                if (iteParticleMain!=1){
+                  pat::PackedCandidate closestPatMain = thePats.at(iteParticleMain);
+                  if ((minDrMain<0.001)&&(fabs(closestPatMain.pdgId())==22)&&((pfIso04.sumPhotonEt-pfPhotonToRemove-closestPatMain.pt())>0)){
+                    pfPhotonToRemove =  pfPhotonToRemove+ closestPatMain.pt();
+                  }
+                  if ((minDrMain<0.001)&&(fabs(closestPatMain.pdgId())==130)&&((pfIso04.sumNeutralHadronEt-ntHadPtToRemove-closestPatMain.pt())>0)){
+                    ntHadPtToRemove = ntHadPtToRemove+ closestPatMain.pt();
+                  }
+                }
+              }*/
+            }
+          }
+      }
+    /*  cout << "isoFirst=" << ntupleMu.isoPflow04 << endl;
+      cout << "charged=" << pfIso04.sumChargedHadronPt << " neutral=" << pfIso04.sumNeutralHadronEt << " photon=" << pfIso04.sumPhotonEt << endl;
+      cout << "muPt=" << mu.pt() << endl;*/
+      ntupleMu.isoPflow04cleaned = (pfIso04.sumChargedHadronPt - chHadPtToRemove +
+			     std::max(0.,pfIso04.sumPhotonEt+pfIso04.sumNeutralHadronEt - 0.5*pfIso04.sumPUPt)) / mu.pt();
+      ntupleMu.isoPflow04cleanedFSR = (pfIso04.sumChargedHadronPt  - chHadPtToRemove +
+			     std::max(0.,pfIso04.sumPhotonEt+pfIso04.sumNeutralHadronEt - pfPhotonToRemove - 0.5*pfIso04.sumPUPt)) / mu.pt();
+      ntupleMu.isoPflow04cleanedFNeutral = (pfIso04.sumChargedHadronPt  - chHadPtToRemove +
+                std::max(0.,pfIso04.sumPhotonEt+pfIso04.sumNeutralHadronEt - pfPhotonToRemove - ntHadPtToRemove - 0.5*pfIso04.sumPUPt)) / mu.pt();
+    /*  cout << "isoCleanning1=" << ntupleMu.isoPflow04cleaned << endl;
+      cout << "isoCleanning2=" << ntupleMu.isoPflow04cleanedFSR << endl;
+      cout << "isoCleanning3=" << ntupleMu.isoPflow04cleanedFNeutral << endl;*/
+
+      /*  cout << "the nearest particle = " << minDr << endl;
+        cout << "the sec particle = " << secMin << endl;
+        if ((iteParticle!=-1)&&(minDr<0.0001)){
+          pat::PackedCandidate closestPat = thePats.at(iteParticle);
+          cout << "pt=" << closestPat.pt() << " pdgID=" << closestPat.pdgId() << endl;
+          cout <<pfIso04.sumChargedHadronPt;
+          cout << " " << pfIso04.sumPhotonEt;
+          cout << " " << pfIso04.sumNeutralHadronEt;
+          cout << " " << pfIso04.sumPUPt << endl;
+          cout << "tot=" << ntupleMu.isoPflow04 << endl;
+          if ((minDr<0.0001)&&()
+          float newChHadrons      = fabs(closestPat.pdgId())==211 ? pfIso04.sumChargedHadronPt-closestPat.pt(): pfIso04.sumChargedHadronPt;
+          float newNeutral =  pfIso04.sumPhotonEt+pfIso04.sumNeutralHadronEt;
+          ntupleMu.isoPflow04cleaned = (newChHadrons+
+               std::max(0.,newNeutral - 0.5*pfIso04.sumPUPt)) / mu.pt();
+          cout << "totCleaned=" << ntupleMu.isoPflow04cleaned << endl;
+
+          ntupleMu.PFparticleInCone_pt = closestPat.pt();
+          ntupleMu.PFparticleInCone_pdgID = closestPat.pdgId();
+        }
+      }
+    }*/
 
       if(mu.isTimeValid()) {
 	ntupleMu.muonTimeDof = mu.time().nDof;
@@ -1089,6 +1245,17 @@ bool MuonPogTreeProducer::isIsolatedMuon( const reco::Muon& muon ) const
   if(relIso<0.1) return true;
   else return false;
 
+}
+bool MuonPogTreeProducer::isTkHighPtMuons( const reco::Muon& muon ) const
+{
+  if (!(muon.isTrackerMuon())) return false;
+  if (muon.innerTrack().isNull()) return false;
+  if (!(muon.numberOfMatchedStations()>1)) return false;
+  if (!(muon.innerTrack()->hitPattern().numberOfValidPixelHits()>0)) return false;
+  if (!(muon.innerTrack()->hitPattern().trackerLayersWithMeasurement()>5)) return false;
+  if (!(muon.tunePMuonBestTrack()->ptError()/muon.tunePMuonBestTrack()->pt()<0.3)) return false;
+
+  return true;
 }
 
 #include "FWCore/Framework/interface/MakerMacros.h"

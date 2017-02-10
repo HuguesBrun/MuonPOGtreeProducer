@@ -164,9 +164,14 @@ namespace muon_pog {
     Int_t   isTight;
     Int_t   isMedium;
     Int_t   isHighPt;
+    Int_t   isTkHighPt;
 
     //Detector Based Isolation
     Float_t trackerIso;
+    Float_t trackerIsoCleaned;
+
+    Float_t trackerIso04;
+
     Float_t EMCalIso;
     Float_t HCalIso;
 
@@ -179,6 +184,12 @@ namespace muon_pog {
 
     Float_t isoPflow04; // PF isolation in dR<0.4 cone dBeta
     Float_t isoPflow03; // PF isolation in dR<0.3 cone dBeta
+    Float_t isoPflow04cleaned; // PF isolation in dR<0.3 cone dBeta
+    Float_t isoPflow04cleanedFSR; // PF isolation in dR<0.3 cone dBeta
+    Float_t isoPflow04cleanedFNeutral; // PF isolation in dR<0.3 cone dBeta
+
+    Float_t PFparticleInCone_pt;
+    Float_t PFparticleInCone_pdgID;
 
     Float_t dxy;       // signed transverse distance to primary vertex [cm]
     Float_t dz;        // signed longitudinal distance to primary vertex at min. transv. distance [cm]
